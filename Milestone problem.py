@@ -1,88 +1,126 @@
 
-from scipy.constants import speed_of_light as c, Planck as h, G, elementary_charge as e, m_e, m_p, m_n
-from scipy import integrate
 import numpy as np
-def integration():
-    def equations(r, y):
+from scipy.integrate import solve_ivp
+from scipy.constants import G, h, m_e, pi , c
+
+def white_dwarf_structure():
+    """
+    Solve white dwarf structure using the original stellar structure ODEs:
+    dp/dr = -G*M*rho/r²
+    dM/dr = 4*π*r²*rho
+    """
+    print(c)
+    # Physical constants
+    solar_mass = 1.98847e30  # kg
+    
+    # Equation of state for non-relativistic degenerate electron gas
+    # P = K * rho^(5/3) where K is the polytropic constant
+    m_n = 1.66054e-27  # atomic mass unit (kg)
+    Z_over_A = 0.5     # for carbon-12
+     
+    K = ((h/(2*pi))**2 / (15* pi**2 * m_e)) * ((3*pi**2 * Z_over_A) / (m_n * c**2))**(5/3)
+    print(f"WHITE DWARF STELLAR STRUCTURE SOLVER")
+    print(f"Using stellar structure ODEs: dp/dr and dM/dr")
+    print(f"Polytropic constant K = {K:.3e} Pa⋅m^5⋅kg^(-5/3)")
+    
+    def stellar_structure_equations(r, y):
+        """
+        Stellar structure equations:
+        y[0] = p (pressure)
+        y[1] = M (mass enclosed)
+        """
         p, M = y
         
-        # White dwarf equation of state (non-relativistic degenerate electron gas)
-        # p = K * rho^(5/3) where K = (h^2/5m_e) * (3/8π)^(2/3) * (Z/A)^(5/3)
-        # For C-12: Z/A = 0.5, so K ≈ 9.9e12 in SI units (Pa⋅m^5⋅kg^(-5/3))
-        K = 9.9e12  
+        # Equation of state: rho = (p/K)^(3/5)
+        if p > 0:
+            rho = (p / (K*c**2))**(3/5)
+        else:
+            rho = 0
+            return [0, 0]  # Stop if pressure becomes zero or negative
         
-        if p <= 0:
-            return [0, 0]  # Stop integration if pressure becomes non-positive
-            
-        rho = (p / K)**(3/5)  # Density from EOS
-        
-        # Stellar structure equations
+        # Handle singularity at r = 0
         if r <= 0:
             dpdr = 0
             dMdr = 0
         else:
-            dpdr = -G * M * rho / r**2 
-            dMdr = 4 * np.pi * r**2 * rho
-            
+            # Stellar structure equations
+            dpdr = -G * M * rho / r**2  # Hydrostatic equilibrium
+            dMdr = 4 * pi * r**2 * rho  # Mass continuity
+        
         return [dpdr, dMdr]
-
-    # Integration parameters
-    r_start = 1.0     # Start at 1 meter (to avoid r=0 singularity)
-    r_end = 2e7       # Maximum radius (20,000 km)
     
-    # Initial conditions - typical white dwarf values
-    p_central = 5e22  # Central pressure (Pa) 
-    K = 9.9e12
-    rho_central = (p_central / K)**(3/5)
-    M_start = 4/3 * np.pi * (r_start**3) * rho_central  # Mass within starting radius
+    # Central conditions
+    p_central = 1e19 # Central pressure (Pa) - try different values
     
-    r_span = (r_start, r_end)
+    # Start integration from small radius (not zero to avoid singularity)
+    r_start = 1.0  # meters
+    r_max = 1e7    # 10,000 km maximum
+    
+    # Initial mass within r_start
+    rho_central = (p_central / (K*c**2))**(3/5)
+    M_start = (4/3) * pi * r_start**3 * rho_central
+    
+    print(f"\nInitial conditions:")
+    print(f"Central pressure: {p_central:.2e} Pa")
+    print(f"Central density: {rho_central:.2e} kg/m³") 
+    print(f"Starting radius: {r_start} m")
+    print(f"Starting mass: {M_start:.3e} kg ({M_start/solar_mass:.6f} M☉)")
+    
+    # Initial conditions
     y0 = [p_central, M_start]
+    r_span = (r_start, r_max)
     
-    print(f"Starting integration with:")
-    print(f"  Central pressure: {p_central:.2e} Pa")
-    print(f"  Central density: {rho_central:.2e} kg/m³")
-    print(f"  Starting radius: {r_start} m")
-    print(f"  Initial mass: {M_start:.2e} kg")
-
-    def stop_event(r, y):
-        return y[0] - 1e18  # Stop when pressure drops significantly
-    stop_event.terminal = True
-    stop_event.direction = -1
-
-    sol = integrate.solve_ivp(
-        equations,
+    # Event function: stop when pressure drops to very small value
+    def surface_condition(r, y):
+        return y[1] - 1e15  # Stop when pressure drops to 10^15 Pa
+    surface_condition.terminal = True
+    surface_condition.direction = -1
+    
+    print("\nIntegrating stellar structure equations...")
+    
+    # Solve the ODEs
+    sol = solve_ivp(
+        stellar_structure_equations,
         r_span,
         y0,
-        events=stop_event,
+        events=surface_condition,
         method='RK45',
-        max_step=1000,
-        rtol=1e-6,
-        atol=1e-10
+        dense_output=True,
+        rtol=1e-8,
+        atol=1e-12,
+        max_step=100
     )
-
-    solar_mass = 1.98847e30  # kg
+    
+    print(f"Integration status: {sol.status}")
     
     if sol.status == 1 and len(sol.t_events[0]) > 0:
-        # Integration stopped due to event (pressure reached threshold)
-        final_mass_solar = sol.y_events[0][0][1] / solar_mass
-        final_radius_km = sol.t_events[0][0] / 1e3
-        print(f"Integration successful!")
-        print(f"Final mass M = {final_mass_solar:.4f} solar masses")
-        print(f"Final radius R = {final_radius_km:.1f} km")
-        print(f"Final pressure = {sol.y_events[0][0][0]:.2e} Pa")
+        # Surface found via event
+        R_surface = sol.t_events[0][0]
+        M_total = sol.y_events[0][0][1]
+        p_surface = sol.y_events[0][0][0]
+        
+        print(f"\n✓ Surface found!")
+        print(f"Radius: {R_surface/1000:.1f} km")
+        print(f"Total mass: {M_total/solar_mass:.4f} M☉")
+        print(f"Surface pressure: {p_surface:.2e} Pa")
+        
+        return R_surface, M_total, p_central
+        
     else:
-        # Integration reached maximum radius or failed
-        print(f"Integration status: {sol.status}")
+        # Integration went to maximum radius
         if len(sol.t) > 0:
-            last_p = sol.y[0, -1]
-            last_M = sol.y[1, -1]
-            last_r = sol.t[-1]
-            print(f"Last computed pressure p = {last_p:.3e} Pa")
-            print(f"Last computed mass M = {last_M/solar_mass:.6f} solar masses") 
-            print(f"Last computed radius r = {last_r/1e3:.4f} km")
+            R_final = sol.t[-1]
+            M_final = sol.y[1, -1]
+            p_final = sol.y[0, -1]
             
-            # Check if we're close to a solution
-            if last_p < 1e12:  # If pressure is reasonably low
-                print(f"Approximate solution: M ≈ {last_M/solar_mass:.4f} M☉, R ≈ {last_r/1e3:.1f} km")
-integration()  # Example central pressure in Pascals
+            print(f"\nReached maximum radius:")
+            print(f"Final radius: {R_final/1000:.1f} km")
+            print(f"Final mass: {M_final/solar_mass:.4f} M☉")
+            print(f"Final pressure: {p_final:.2e} Pa")
+            
+            return R_final, M_final, p_central
+        else:
+            print("Integration failed!")
+            return None, None, None
+
+R, M, p_c = white_dwarf_structure()
